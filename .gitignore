@@ -1,0 +1,6 @@
+*.apk
+*.xapk
+*.keystore
+*.idsig
+.DS_Store
+.idea/
