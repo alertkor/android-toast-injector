@@ -1,14 +1,30 @@
-import json, getpass
-import sys, os, glob
+import getpass
+import glob
+import json
+import os
+import re
+import sys
 
 
 class AndroidToastInject:
     def __init__(self):
+        if len(sys.argv) <= 1:
+            print('[-] Error: Input xapk or apk path.')
+            print('$ python main.py test.apk')
+            exit()
+        elif not sys.argv[1].endswith('apk') and not sys.argv[1].endswith('xapk'):
+            print('[-] Error: unknown extension.')
+            exit()
+        elif not os.path.exists(sys.argv[1]):
+            print('[-] Error: target not found.')
+            exit()
+
         self.toast_msg = sys.argv[2] if len(sys.argv) > 2 else 'Hello, Repackaging works!'
         self.main_activity_path = ''
+        self.min_sdk_version = 28
         self.package_name = ''
         self._target_apk_path = sys.argv[1]
-        self.is_xapk = self._target_apk_path.__contains__('.xapk')
+        self.is_xapk = self._target_apk_path.endswith('.xapk')
         self.decompile()
         self.find_main_activity()
         self.inject_toast()
@@ -26,8 +42,13 @@ class AndroidToastInject:
         self.__log('[*] Decompiling...')
         os.system(f"apktool d {sys.argv[1]} -o output -f -r")
         if self.is_xapk:
-            self.package_name = json.loads(open('./output/unknown/manifest.json', 'r').read())['package_name']
+            manifest = json.loads(open('./output/unknown/manifest.json', 'r').read())
+            self.package_name = manifest['package_name']
+            self.min_sdk_version = manifest.get('min_sdk_version', 28)
             os.system(f"apktool d ./output/unknown/{self.package_name}.apk -o ./output/unknown/{self.package_name} -f -r")
+        else:
+            apktool = open('./output/apktool.yml', 'r').read()
+            self.min_sdk_version = re.findall('minSdkVersion: \'(.*?)\'\n', apktool)[0] or 28
         return
 
     def find_main_activity(self):
@@ -90,19 +111,24 @@ class AndroidToastInject:
         self.__log('[*] Signing...')
         password = getpass.getpass('[*] Input your key password: ')
         if self.is_xapk:
+            total_size = 0
             for split_apk in glob.glob('./output/unknown/*.apk'):
-                os.system(f'apksigner sign --ks injector.keystore --ks-pass pass:"{password}" {split_apk}')
+                os.system(f'apksigner sign --ks injector.keystore --min-sdk-version {self.min_sdk_version} --ks-pass pass:"{password}" {split_apk}')
+                total_size += len(open(split_apk, 'rb').read())
                 self.__log(f'[+] Successfully signed in {split_apk}')
+            manifest = json.loads(open('./output/unknown/manifest.json', 'r').read())
+            manifest['total_size'] = total_size
+            open('./output/unknown/manifest.json', 'w').write(json.dumps(manifest, ensure_ascii=False))
             os.system(f'apktool b --use-aapt2 output -o patched.xapk')
-            os.system(f'apksigner sign --ks injector.keystore --ks-pass pass:"{password}" patched.xapk')
+            os.system(f'apksigner sign --ks injector.keystore --min-sdk-version {self.min_sdk_version} --ks-pass pass:"{password}" patched.xapk')
         else:
-            os.system(f'apksigner sign --ks injector.keystore --ks-pass pass:"{password}" patched.apk')
+            os.system(f'apksigner sign --ks injector.keystore --min-sdk-version {self.min_sdk_version} --ks-pass pass:"{password}" patched.apk')
         return
 
     def remove(self):
         self.__log('[*] Remove decompiled files...')
         os.system('rm -rf ./output/')
-        self.__log(f'[*] Successfully compiled: patched.{"xapk" if self.is_xapk else "apk"}')
+        self.__log(f'[*] Successfully generated: patched.{"xapk" if self.is_xapk else "apk"}')
         return
 
 
